@@ -1,26 +1,41 @@
------03_insert_fraud_dummy_data
+-- 03_insert_fraud_dummy_data.sql - FIXED VERSION
 USE BEMM459_ARAUT;
 GO
 
--- STEP 1: Insert 25 customers
+-- STEP 1: Insert 25 customers only if they don't already exist
 DECLARE @i INT = 1;
 
 WHILE @i <= 25
 BEGIN
-    INSERT INTO fraud.customers (customer_id, name, email, join_date, risk_score)
-    VALUES (
-        NEWID(),
-        CONCAT('Customer_', @i),
-        CONCAT('customer', @i, '@example.com'),
-        DATEADD(DAY, -ABS(CHECKSUM(NEWID()) % 100), GETDATE()),
-        CAST(RAND() * 50 + 50 AS INT)
-    );
+    IF NOT EXISTS (
+        SELECT 1 FROM fraud.customers 
+        WHERE email = CONCAT('customer', @i, '@example.com')
+    )
+    BEGIN
+        INSERT INTO fraud.customers (customer_id, name, email, join_date, risk_score)
+        VALUES (
+            NEWID(),
+            CONCAT('Customer_', @i),
+            CONCAT('customer', @i, '@example.com'),
+            DATEADD(DAY, -ABS(CHECKSUM(NEWID()) % 100), GETDATE()),
+            CAST(RAND() * 50 + 50 AS INT)
+        );
+    END
     SET @i += 1;
 END;
 
+-- STEP 1.5: Update all placeholder names to realistic ones
+UPDATE fraud.customers
+SET 
+    name = CONCAT('AutoName_', LEFT(NEWID(), 8)),
+    email = CONCAT(LEFT(NEWID(), 8), '@example.uk')
+WHERE name LIKE 'Customer_%';
+
 -- STEP 2: Create 25 accounts (1 per customer)
 DECLARE customer_cursor CURSOR FOR
-SELECT customer_id FROM fraud.customers ORDER BY NEWID();
+SELECT customer_id FROM fraud.customers 
+WHERE customer_id NOT IN (SELECT customer_id FROM fraud.accounts)
+ORDER BY NEWID();
 
 DECLARE @cust_id UNIQUEIDENTIFIER;
 
@@ -57,7 +72,7 @@ BEGIN
         CONCAT(CAST(RAND() * 255 AS INT), '.', CAST(RAND() * 255 AS INT), '.', CAST(RAND() * 255 AS INT), '.', CAST(RAND() * 255 AS INT))
     );
 
-    -- Assign this device to a random customer
+    -- Assign device to random customer (if not already linked)
     INSERT INTO fraud.customer_devices (customer_id, device_id)
     SELECT TOP 1 customer_id, @device_id
     FROM fraud.customers
@@ -81,11 +96,11 @@ DECLARE @device_id_txn UNIQUEIDENTIFIER;
 
 WHILE @k <= 30
 BEGIN
-    -- Pick a random account
+    -- Pick a random account and customer
     SELECT TOP 1 
-        @account_id = account_id,
-        @customer_id = customer_id
-    FROM fraud.accounts
+        @account_id = a.account_id,
+        @customer_id = a.customer_id
+    FROM fraud.accounts a
     ORDER BY NEWID();
 
     -- Get a valid device for this customer
